@@ -1,0 +1,1505 @@
+Worked for 35s
+
+### Module 7 — Observability, Performance, and Cost Optimization
+
+AWS Load Balancing · Advanced · Pulumi Python · Bash
+
+### 7.1. Introduction
+
+Deploying a load balancer is only the beginning of operating a reliable application infrastructure. In production, you need to understand how traffic flows through the load balancer, whether targets are healthy, where latency originates, and how much the infrastructure costs.
+
+In this module, we'll build an observability and performance-monitoring foundation around AWS Elastic Load Balancing.
+
+We'll use an ALB-based application as our primary example and examine NLB-specific monitoring and billing where appropriate.
+
+By the end of this module, you'll understand how to:
+
+* Monitor ALB and NLB performance using CloudWatch.
+
+* Interpret load-balancer metrics and distinguish infrastructure problems from application problems.
+
+* Analyze access logs and investigate failed requests.
+
+* Build CloudWatch dashboards and alarms with Pulumi.
+
+* Generate controlled HTTP traffic and analyze performance.
+
+* Understand LCU and NLCU consumption and optimize costs.
+
+* Troubleshoot 502/503 errors, latency, unhealthy targets, and connection problems.
+
+### 7.2. AWS Load Balancer Observability Architecture
+
+A production monitoring architecture generally combines four complementary sources of information:
+
+| Service              | Responsibility                                                 |
+| -------------------- | -------------------------------------------------------------- |
+| CloudWatch Metrics   | Numerical measurements of load-balancer and target performance |
+| CloudWatch Logs / S3 | Detailed request and connection records                        |
+| CloudTrail           | API activity and infrastructure configuration changes          |
+| AWS Config           | Configuration history and compliance evaluation                |
+
+These services answer different questions:
+
+* CloudWatch: Is the load balancer performing normally?
+
+* Access logs: What happened to a particular request?
+
+* CloudTrail: Who changed the load balancer configuration?
+
+* AWS Config: Does the infrastructure comply with our desired configuration?
+
+A useful production architecture looks like this:
+
+Clients and application traffic
+
+HTTP / HTTPS / TCP
+
+Application Load Balancer / Network Load Balancer
+
+Listeners · Target groups · Health checks
+
+Application targets
+
+EC2 / ECS / EKS
+
+Databases and dependencies
+
+RDS / external APIs
+
+CloudWatch
+
+Metrics and alarms
+
+Access logs
+
+Request analysis
+
+CloudTrail
+
+API activity
+
+AWS Config
+
+Configuration compliance
+
+The important principle is that no single monitoring service provides the complete picture. Production troubleshooting requires correlating multiple sources.
+
+### 7.3. CloudWatch Metrics for Load Balancers
+
+Amazon CloudWatch automatically collects metrics from Elastic Load Balancing. You don't need to install an agent on the load balancer.
+
+ALB and NLB publish metrics into separate namespaces.
+
+| Load balancer         | CloudWatch namespace |
+| --------------------- | -------------------- |
+| ALB                   | AWS/ApplicationELB   |
+| NLB                   | AWS/NetworkELB       |
+| Classic Load Balancer | AWS/ELB              |
+
+Metrics are generally published at 60-second intervals when traffic is flowing. An important detail: the absence of a data point does not necessarily mean a metric has a value of zero. Some metrics are published only when their reporting conditions are met. Elastic Load Balancing +1
+
+### 7.3.1. Important ALB metrics
+
+Let's examine the metrics you'll use most often in production.
+
+| Metric                     | Meaning                                                                  | Useful statistic    |
+| -------------------------- | ------------------------------------------------------------------------ | ------------------- |
+| RequestCount               | Requests processed by ALB that were assigned a target                    | Sum                 |
+| TargetResponseTime         | Time until a target begins sending response headers                      | Average / p95 / p99 |
+| ActiveConnectionCount      | Concurrent TCP connections between clients, ALB, and targets             | Sum                 |
+| NewConnectionCount         | Newly established TCP connections                                        | Sum                 |
+| ProcessedBytes             | Bytes processed by ALB                                                   | Sum                 |
+| HealthyHostCount           | Healthy registered targets                                               | Minimum / Average   |
+| UnHealthyHostCount         | Unhealthy registered targets                                             | Maximum             |
+| RejectedConnectionCount    | Connections rejected because ALB reached its maximum connection capacity | Sum                 |
+| HTTPCode_ELB_5XX_Count     | HTTP 5xx errors generated by ALB                                         | Sum                 |
+| HTTPCode_Target_5XX_Count  | HTTP 5xx errors generated by backend targets                             | Sum                 |
+| TargetConnectionErrorCount | Failed connections between ALB and targets                               | Sum                 |
+| ConsumedLCUs               | Load Balancer Capacity Units consumed                                    | Maximum / Average   |
+
+One distinction is particularly important:
+
+* `HTTPCode_ELB_5XX_Count` measures errors generated by the load balancer.
+
+* `HTTPCode_Target_5XX_Count` measures errors generated by your application targets.
+
+A backend application returning HTTP 500 does not mean ALB itself generated the error.
+
+Similarly, `TargetResponseTime` measures backend response-start latency, not the complete end-to-end time experienced by the client. Elastic Load Balancing +1
+
+### 7.3.2. Important NLB metrics
+
+NLB is a Layer 4 load balancer, so its monitoring focuses more heavily on connections, flows, packets, and throughput.
+
+| Metric                 | Meaning                                       |
+| ---------------------- | --------------------------------------------- |
+| ActiveFlowCount        | Concurrent active flows                       |
+| NewFlowCount           | Newly established flows                       |
+| ProcessedBytes         | Total bytes processed                         |
+| ProcessedPackets       | Total packets processed                       |
+| TCP_Client_Reset_Count | TCP resets originating from clients           |
+| TCP_Target_Reset_Count | TCP resets originating from targets           |
+| TCP_ELB_Reset_Count    | TCP resets originating from the load balancer |
+| HealthyHostCount       | Healthy targets                               |
+| UnHealthyHostCount     | Unhealthy targets                             |
+| ConsumedLCUs           | NLB capacity consumption                      |
+
+Unlike ALB, NLB doesn't provide HTTP request latency and HTTP status-code metrics because it operates at Layer 4.
+
+You should instead correlate connection-level metrics with application metrics and logs. Elastic Load Balancing +1
+
+### 7.3.3. Inspect metrics using AWS CLI
+
+First, discover available ALB metrics:
+
+```bash
+aws cloudwatch list-metrics \
+  --namespace AWS/ApplicationELB
+```
+
+Discover NLB metrics:
+
+```bash
+aws cloudwatch list-metrics \
+  --namespace AWS/NetworkELB
+```
+
+To retrieve ALB request counts:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApplicationELB \
+  --metric-name RequestCount \
+  --dimensions \
+    Name=LoadBalancer,Value=app/my-alb/1234567890123456 \
+  --start-time "$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 60 \
+  --statistics Sum
+```
+
+To inspect target response time:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApplicationELB \
+  --metric-name TargetResponseTime \
+  --dimensions \
+    Name=LoadBalancer,Value=app/my-alb/1234567890123456 \
+  --start-time "$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 60 \
+  --statistics Average \
+  --extended-statistics p95 p99
+```
+
+The dimension values must match the actual resources. For target-group metrics, include the appropriate `TargetGroup` dimension as well.
+
+Important: The most useful statistic depends on the metric. For example, use `Sum` for request counts, `Maximum` for unhealthy host counts, and percentiles for latency. Avoid blindly applying `Average` to every metric.
+
+### 7.4. ALB and NLB Access Logs
+
+CloudWatch metrics tell you what is happening at an aggregate level. Access logs provide detailed information about individual requests or connections.
+
+### 7.4.1. ALB access logs
+
+ALB access logs contain detailed information about HTTP and HTTPS requests.
+
+They include fields such as:
+
+| Field                    | Description                                                       |
+| ------------------------ | ----------------------------------------------------------------- |
+| type                     | Request type                                                      |
+| time                     | Request timestamp                                                 |
+| client:port              | Client address                                                    |
+| target:port              | Backend target                                                    |
+| request_processing_time  | Time spent processing the request before forwarding               |
+| target_processing_time   | Time until the target begins sending response headers             |
+| response_processing_time | Time spent processing the response after receiving target headers |
+| elb_status_code          | HTTP status code generated by ALB                                 |
+| target_status_code       | HTTP status code generated by the target                          |
+| request                  | HTTP request line                                                 |
+| user_agent               | Client user-agent                                                 |
+| trace_id                 | Request tracing identifier                                        |
+
+These fields help distinguish frontend delays, backend delays, and response-delivery delays. Elastic Load Balancing +1
+
+For example, consider:
+
+```text
+request_processing_time = 0.001
+target_processing_time  = 4.500
+response_processing_time = 0.002
+```
+
+The backend took approximately 4.5 seconds to begin returning its response headers.
+
+This suggests investigating:
+
+* Application execution time.
+
+* Database query performance.
+
+* External API dependencies.
+
+* CPU and memory pressure.
+
+* Backend connection pools.
+
+It does not immediately suggest an ALB performance problem.
+
+### 7.4.2. Enable ALB access logs
+
+A traditional ALB access-log configuration uses an S3 bucket.
+
+We'll use Pulumi to create the bucket and configure the load balancer.
+
+First, install the required dependencies:
+
+```bash
+pip install pulumi pulumi-aws
+```
+
+Example:
+
+```python
+import pulumi
+import pulumi_aws as aws
+
+config = pulumi.Config()
+
+account_id = aws.get_caller_identity().account_id
+region = aws.get_region().name
+
+log_bucket = aws.s3.BucketV2(
+    "alb-access-logs",
+    force_destroy=True,
+)
+
+bucket_policy = aws.s3.BucketPolicy(
+    "alb-log-delivery-policy",
+    bucket=log_bucket.id,
+    policy=pulumi.Output.json_dumps({
+        "Version": "2012-10-17",
+        "Statement": [{
+            "Effect": "Allow",
+            "Principal": {
+                "Service": "logdelivery.elasticloadbalancing.amazonaws.com"
+            },
+            "Action": "s3:PutObject",
+            "Resource": (
+                f"{log_bucket.arn}/AWSLogs/{account_id}/*"
+            )
+        }]
+    }),
+)
+
+alb = aws.lb.LoadBalancer(
+    "application-alb",
+    internal=False,
+    load_balancer_type="application",
+    security_groups=["sg-xxxxxxxx"],
+    subnets=["subnet-xxxxxxxx", "subnet-yyyyyyyy"],
+    enable_deletion_protection=False,
+    access_logs={
+        "bucket": log_bucket.bucket,
+        "enabled": True,
+        "prefix": "alb",
+    },
+    opts=pulumi.ResourceOptions(
+        depends_on=[bucket_policy]
+    ),
+)
+
+pulumi.export("log_bucket", log_bucket.bucket)
+pulumi.export("alb_dns", alb.dns_name)
+```
+
+This is an illustrative logging configuration: in a complete project, use your existing VPC, security groups, and subnet outputs from earlier modules.
+
+For production, also configure:
+
+* S3 Block Public Access.
+
+* Bucket ownership and delivery permissions.
+
+* Server-side encryption.
+
+* Lifecycle policies.
+
+* Restricted access to log files.
+
+* Appropriate retention periods.
+
+AWS has also introduced direct delivery of ALB access, connection, and health-check logs to CloudWatch Logs, Data Firehose, and S3. This provides an alternative to traditional S3-only logging. Elastic Load Balancing +1
+
+### 7.4.3. Analyze access logs
+
+After logs have been delivered to S3:
+
+```bash
+aws s3 ls s3://YOUR-LOG-BUCKET/AWSLogs/ \
+  --recursive
+```
+
+Download a log file:
+
+```bash
+aws s3 cp \
+  s3://YOUR-LOG-BUCKET/path/to/log.gz \
+  ./alb-access.log.gz
+```
+
+Decompress:
+
+```bash
+gunzip -k alb-access.log.gz
+```
+
+For a quick inspection:
+
+```bash
+grep -E '" 5[0-9][0-9] ' alb-access.log
+```
+
+For serious analysis, use Athena or CloudWatch Logs Insights rather than relying on `grep`, because ALB log records contain quoted fields and optional trailing fields.
+
+Example CloudWatch Logs Insights query (for ALB logs delivered to a CloudWatch log group):
+
+```sql
+fields @timestamp,
+       elb_status_code,
+       target_status_code,
+       target_processing_time,
+       request_url
+| filter elb_status_code >= 500
+    or target_status_code >= 500
+| sort @timestamp desc
+| limit 50
+```
+
+The actual field names depend on the log ingestion format and whether fields are automatically discovered or explicitly parsed.
+
+### 7.4.4. NLB logging
+
+NLB logging differs from ALB logging.
+
+Traditional NLB access logs are specifically associated with TLS listeners and contain TLS request/connection information. They are not equivalent to ALB HTTP access logs.
+
+NLB also supports enhanced logging integrations with CloudWatch Logs, Data Firehose, and S3.
+
+For non-TLS TCP and UDP traffic, use CloudWatch flow and connection metrics, application-level logging, and appropriate network telemetry rather than expecting HTTP request details from NLB access logs. Elastic Load Balancing +1
+
+### 7.5. CloudWatch Dashboards and Alarms
+
+In production, you shouldn't need to run AWS CLI commands every time you want to understand application health.
+
+Instead, create dashboards that continuously display important metrics and alarms that notify you when something goes wrong.
+
+### 7.5.1. Designing an ALB dashboard
+
+For our application, we'll create a dashboard with the following monitoring categories:
+
+| Category           | Metrics                                              |
+| ------------------ | ---------------------------------------------------- |
+| Traffic            | RequestCount, ProcessedBytes                         |
+| Latency            | TargetResponseTime                                   |
+| Target health      | HealthyHostCount, UnHealthyHostCount                 |
+| ALB errors         | HTTPCode_ELB_4XX_Count, HTTPCode_ELB_5XX_Count       |
+| Application errors | HTTPCode_Target_4XX_Count, HTTPCode_Target_5XX_Count |
+| Connections        | ActiveConnectionCount, NewConnectionCount            |
+| Capacity           | ConsumedLCUs, RejectedConnectionCount                |
+
+The dashboard should help answer these questions:
+
+* Is traffic increasing?
+
+* Is application latency increasing?
+
+* Are backend targets becoming unhealthy?
+
+* Are errors generated by ALB or the application?
+
+* Is load-balancer capacity becoming a concern?
+
+### 7.5.2. Create CloudWatch alarms with Pulumi
+
+We'll create an SNS topic for notifications and CloudWatch alarms for important conditions.
+
+Project structure:
+
+```text
+alb-monitoring/
+├── Pulumi.yaml
+├── requirements.txt
+└── __main__.py
+```
+
+`requirements.txt`:
+
+```text
+pulumi>=3.0.0
+pulumi-aws>=7.0.0
+```
+
+Install dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+Create `Pulumi.yaml`:
+
+```yaml
+name: alb-monitoring
+runtime:
+  name: python
+description: ALB monitoring infrastructure
+```
+
+Now configure the stack:
+
+```bash
+pulumi stack init dev
+
+pulumi config set aws:region eu-west-2
+
+pulumi config set albDimension \
+  app/my-alb/1234567890123456
+
+pulumi config set notificationEmail \
+  admin@example.com
+```
+
+Replace the example ALB dimension with your actual ALB dimension and the email with your notification address.
+
+`__main__.py`:
+
+```python
+import json
+import pulumi
+import pulumi_aws as aws
+
+config = pulumi.Config()
+
+alb_dimension = config.require("albDimension")
+notification_email = config.require("notificationEmail")
+
+# SNS notification topic
+topic = aws.sns.Topic(
+    "alb-alerts",
+)
+
+subscription = aws.sns.TopicSubscription(
+    "alb-alert-email",
+    topic=topic.arn,
+    protocol="email",
+    endpoint=notification_email,
+)
+
+# Common ALB dimensions
+dimensions = {
+    "LoadBalancer": alb_dimension,
+}
+
+# Alarm 1: High target response time
+latency_alarm = aws.cloudwatch.MetricAlarm(
+    "alb-high-latency",
+    comparison_operator="GreaterThanThreshold",
+    evaluation_periods=3,
+    metric_name="TargetResponseTime",
+    namespace="AWS/ApplicationELB",
+    period=60,
+    statistic="Average",
+    threshold=2.0,
+    alarm_description="ALB target response time exceeds 2 seconds",
+    dimensions=dimensions,
+    treat_missing_data="notBreaching",
+    alarm_actions=[topic.arn],
+)
+
+# Alarm 2: ALB-generated 5xx errors
+elb_errors_alarm = aws.cloudwatch.MetricAlarm(
+    "alb-5xx-errors",
+    comparison_operator="GreaterThanThreshold",
+    evaluation_periods=2,
+    metric_name="HTTPCode_ELB_5XX_Count",
+    namespace="AWS/ApplicationELB",
+    period=60,
+    statistic="Sum",
+    threshold=10,
+    alarm_description="ALB-generated 5xx errors detected",
+    dimensions=dimensions,
+    treat_missing_data="notBreaching",
+    alarm_actions=[topic.arn],
+)
+
+# Alarm 3: Unhealthy targets
+unhealthy_alarm = aws.cloudwatch.MetricAlarm(
+    "alb-unhealthy-targets",
+    comparison_operator="GreaterThanThreshold",
+    evaluation_periods=2,
+    metric_name="UnHealthyHostCount",
+    namespace="AWS/ApplicationELB",
+    period=60,
+    statistic="Maximum",
+    threshold=0,
+    alarm_description="One or more ALB targets are unhealthy",
+    dimensions=dimensions,
+    treat_missing_data="notBreaching",
+    alarm_actions=[topic.arn],
+)
+
+pulumi.export("sns_topic_arn", topic.arn)
+pulumi.export("latency_alarm_arn", latency_alarm.arn)
+pulumi.export("elb_errors_alarm_arn", elb_errors_alarm.arn)
+pulumi.export("unhealthy_alarm_arn", unhealthy_alarm.arn)
+```
+
+Deploy:
+
+```bash
+pulumi up
+```
+
+The SNS email subscription requires confirmation from the recipient.
+
+Important monitoring considerations:
+
+* The thresholds above are illustrative, not universal production thresholds.
+
+* A target response time of two seconds may be unacceptable for one application but perfectly reasonable for another.
+
+* An alarm for unhealthy targets should be considered alongside the total number of registered targets.
+
+* An alarm on `HTTPCode_ELB_5XX_Count` does not detect application-generated HTTP 500 errors. Monitor `HTTPCode_Target_5XX_Count` separately.
+
+* For critical services, use metric math or anomaly detection to avoid relying exclusively on fixed error-count thresholds.
+
+### 7.5.3. Create a CloudWatch dashboard using Pulumi
+
+Let's extend the same project with a dashboard.
+
+Add this to `__main__.py`:
+
+```python
+dashboard_body = {
+    "widgets": [
+        {
+            "type": "metric",
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "title": "ALB Request Count",
+                "view": "timeSeries",
+                "region": "eu-west-2",
+                "period": 60,
+                "metrics": [
+                    [
+                        "AWS/ApplicationELB",
+                        "RequestCount",
+                        "LoadBalancer",
+                        alb_dimension,
+                        {
+                            "stat": "Sum",
+                            "label": "Requests",
+                        }
+                    ]
+                ],
+            },
+        },
+        {
+            "type": "metric",
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "title": "Target Response Time",
+                "view": "timeSeries",
+                "region": "eu-west-2",
+                "period": 60,
+                "metrics": [
+                    [
+                        "AWS/ApplicationELB",
+                        "TargetResponseTime",
+                        "LoadBalancer",
+                        alb_dimension,
+                        {
+                            "stat": "p95",
+                            "label": "P95 latency",
+                        }
+                    ]
+                ],
+            },
+        },
+        {
+            "type": "metric",
+            "width": 12,
+            "height": 6,
+            "properties": {
+                "title": "ALB and Target Errors",
+                "view": "timeSeries",
+                "region": "eu-west-2",
+                "period": 60,
+                "metrics": [
+                    [
+                        "AWS/ApplicationELB",
+                        "HTTPCode_ELB_5XX_Count",
+                        "LoadBalancer",
+                        alb_dimension,
+                        {"stat": "Sum"},
+                    ],
+                    [
+                        "AWS/ApplicationELB",
+                        "HTTPCode_Target_5XX_Count",
+                        "LoadBalancer",
+                        alb_dimension,
+                        {"stat": "Sum"},
+                    ],
+                ],
+            },
+        },
+    ],
+}
+
+dashboard = aws.cloudwatch.Dashboard(
+    "alb-performance-dashboard",
+    dashboard_name="alb-performance-dashboard",
+    dashboard_body=json.dumps(dashboard_body),
+)
+
+pulumi.export("dashboard_name", dashboard.dashboard_name)
+```
+
+Deploy the updated infrastructure:
+
+```bash
+pulumi up
+```
+
+The dashboard can now be accessed through CloudWatch Dashboards.
+
+For production, add widgets for healthy targets, unhealthy targets, active connections, processed bytes, and consumed LCUs. Amazon CloudWatch +1
+
+### 7.6. CloudTrail and AWS Config Monitoring
+
+CloudWatch focuses on operational behavior. But what if somebody changes a listener rule, deletes a target group, or modifies a load balancer's security configuration?
+
+This is where CloudTrail and AWS Config become useful.
+
+### 7.6.1. CloudTrail: Track configuration changes
+
+CloudTrail records Elastic Load Balancing API management events.
+
+For example:
+
+| API operation                | Purpose                        |
+| ---------------------------- | ------------------------------ |
+| CreateLoadBalancer           | Creates a load balancer        |
+| DeleteLoadBalancer           | Deletes a load balancer        |
+| ModifyLoadBalancerAttributes | Changes load-balancer settings |
+| CreateListener               | Creates a listener             |
+| ModifyListener               | Changes listener configuration |
+| CreateRule                   | Creates a listener rule        |
+| ModifyRule                   | Changes listener rules         |
+| RegisterTargets              | Registers backend targets      |
+| DeregisterTargets            | Removes backend targets        |
+
+These events help identify who performed a change, when it happened, and from which source IP address. Elastic Load Balancing
+
+Inspect recent events using Bash:
+
+```bash
+aws cloudtrail lookup-events \
+  --lookup-attributes \
+    AttributeKey=EventSource,AttributeValue=elasticloadbalancing.amazonaws.com \
+  --max-results 20
+```
+
+To inspect a particular event:
+
+```bash
+aws cloudtrail lookup-events \
+  --lookup-attributes \
+    AttributeKey=EventName,AttributeValue=ModifyListener
+```
+
+CloudTrail Event History provides the most recent 90 days of management events in a Region. For long-term retention, configure a multi-region trail delivering events to S3.
+
+### 7.6.2. AWS Config: Monitor configuration compliance
+
+AWS Config tracks resource configuration changes and can evaluate resources against compliance rules.
+
+For load balancers, useful checks include:
+
+* Application Load Balancers should not be publicly accessible when the architecture requires internal access.
+
+* HTTPS listeners should be configured where required.
+
+* Load balancers should have access logging enabled.
+
+* Security groups should not expose unintended ports.
+
+* Load balancers should meet organizational tagging requirements.
+
+AWS Config managed rules and custom rules can help enforce these requirements.
+
+An important distinction:
+
+CloudTrail tells you who changed a resource. AWS Config helps determine whether the resulting configuration is compliant.
+
+### 7.6.3. Practical investigation workflow
+
+Imagine that someone accidentally changes an HTTPS listener to forward traffic to the wrong target group.
+
+You can investigate it as follows:
+
+* Identify the time at which the problem started using CloudWatch.
+
+* Search CloudTrail for `ModifyListener`.
+
+* Inspect the event's `userIdentity` and `requestParameters`.
+
+* Check the current listener configuration using the AWS CLI.
+
+* Review AWS Config history to understand the configuration change.
+
+* Restore the intended configuration through Pulumi.
+
+This is particularly important when multiple developers or automated deployment pipelines manage the same AWS infrastructure.
+
+### 7.7. Load Testing with Bash, k6, and wrk
+
+Monitoring is most useful when you understand how your application behaves under different traffic conditions.
+
+We'll use load testing to generate traffic and observe how ALB, targets, and application dependencies respond.
+
+### 7.7.1. Install k6
+
+k6 is a load-testing tool that allows you to define virtual users, request rates, durations, and performance thresholds.
+
+One convenient option is to run it using Docker:
+
+```bash
+docker pull grafana/k6
+```
+
+Create `load-test.js`:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+export const options = {
+    stages: [
+        { duration: '30s', target: 10 },
+        { duration: '60s', target: 30 },
+        { duration: '60s', target: 50 },
+        { duration: '30s', target: 0 },
+    ],
+
+    thresholds: {
+        http_req_failed: ['rate<0.05'],
+        http_req_duration: ['p(95)<1000'],
+    },
+};
+
+export default function () {
+    const response = http.get(
+        'http://YOUR-ALB-DNS-NAME/health'
+    );
+
+    check(response, {
+        'status is 200': (r) => r.status === 200,
+    });
+
+    sleep(1);
+}
+```
+
+Run the test:
+
+```bash
+docker run --rm \
+  -v "$PWD:/scripts" \
+  grafana/k6 run /scripts/load-test.js
+```
+
+This test gradually increases virtual users, holds the load, and then decreases traffic.
+
+Remember that virtual users are not the same as requests per second. Actual request throughput depends on response time and the workload behavior.
+
+### 7.7.2. Generate traffic with wrk
+
+Another useful tool is `wrk`, a lightweight HTTP benchmarking utility.
+
+Example:
+
+```bash
+wrk -t4 -c100 -d60s \
+  http://YOUR-ALB-DNS-NAME/
+```
+
+Parameters:
+
+| Parameter | Meaning                    |
+| --------- | -------------------------- |
+| -t4       | Four worker threads        |
+| -c100     | 100 concurrent connections |
+| -d60s     | Run for 60 seconds         |
+
+You can also test a particular endpoint:
+
+```bash
+wrk -t4 -c100 -d120s \
+  http://YOUR-ALB-DNS-NAME/api/products
+```
+
+Use controlled workloads. Do not send high-volume traffic to production systems without explicit authorization and a defined testing window.
+
+### 7.7.3. A reusable Bash load-testing workflow
+
+Create `run-load-test.sh`:
+
+```bash
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ALB_URL="${1:?Usage: ./run-load-test.sh <ALB_URL>}"
+
+echo "Starting load test..."
+echo "Target: ${ALB_URL}"
+
+echo "Checking endpoint..."
+
+curl -fsS "${ALB_URL}/health"
+
+echo
+echo "Running k6..."
+
+docker run --rm \
+    -v "$PWD:/scripts" \
+    grafana/k6 run \
+    -e BASE_URL="${ALB_URL}" \
+    /scripts/load-test.js
+
+echo "Load test completed."
+```
+
+Update the JavaScript script to use the environment variable:
+
+```javascript
+import http from 'k6/http';
+import { check, sleep } from 'k6';
+
+const baseUrl = __ENV.BASE_URL;
+
+export default function () {
+    const response = http.get(`${baseUrl}/health`);
+
+    check(response, {
+        'HTTP 200': (r) => r.status === 200,
+    });
+
+    sleep(1);
+}
+```
+
+Execute:
+
+```bash
+chmod +x run-load-test.sh
+
+./run-load-test.sh \
+  http://YOUR-ALB-DNS-NAME
+```
+
+### 7.7.4. Correlate load testing with CloudWatch
+
+During a test, monitor these metrics together:
+
+| Metric                    | What to observe                         |
+| ------------------------- | --------------------------------------- |
+| RequestCount              | Is request throughput increasing?       |
+| TargetResponseTime        | Is backend latency increasing?          |
+| HealthyHostCount          | Are targets remaining healthy?          |
+| UnHealthyHostCount        | Are targets failing?                    |
+| HTTPCode_Target_5XX_Count | Is the application returning errors?    |
+| HTTPCode_ELB_5XX_Count    | Is ALB generating errors?               |
+| ActiveConnectionCount     | Are connections accumulating?           |
+| ConsumedLCUs              | Which capacity dimension is increasing? |
+
+For example, suppose you observe:
+
+* RequestCount increases significantly.
+
+* TargetResponseTime increases from 100 ms to 2 seconds.
+
+* CPU utilization on EC2 instances reaches 95%.
+
+* HealthyHostCount remains stable.
+
+* Target 5xx errors start increasing.
+
+This suggests that the application instances are struggling under load, even though the load balancer itself is functioning correctly.
+
+The appropriate response may be to increase backend capacity, optimize application code, improve database queries, or configure autoscaling.
+
+Simply increasing load-balancer capacity would not solve this problem.
+
+### 7.8. Understanding LCU, NLCU, and Load Balancer Costs
+
+AWS charges for running load balancers and, depending on the load balancer type, the capacity consumed while processing traffic.
+
+Understanding capacity units is important because high traffic does not necessarily translate into high costs in the same way for every workload.
+
+### 7.8.1. Application Load Balancer — LCU
+
+An LCU (Load Balancer Capacity Unit) measures four dimensions of ALB resource consumption.
+
+| Dimension          | Capacity represented by one LCU              |
+| ------------------ | -------------------------------------------- |
+| New connections    | 25 connections/second                        |
+| Active connections | 3,000 connections/minute                     |
+| Processed bytes    | 1 GB/hour for EC2, container, and IP targets |
+| Rule evaluations   | 1,000 evaluations/second                     |
+
+The first 10 processed rules per request are free for the rule-evaluation calculation.
+
+AWS calculates consumption across these dimensions and charges based on the highest consumption during the billing hour, rather than adding all four dimensions together. Amazon Web Services, Inc. +1
+
+Example:
+
+Imagine an ALB has the following traffic:
+
+* 100 new connections per second.
+
+* 6,000 active connections per minute.
+
+* 2 GB processed per hour.
+
+* 500 rule evaluations per second.
+
+Calculate consumption:
+
+LCU_{connections} = \\frac{100}{25}=4LCU_{active} = \\frac{6000}{3000}=2LCU_{bytes} = \\frac{2}{1}=2LCU_{rules} = \\frac{500}{1000}=0.5
+
+Therefore:
+
+LCU_{consumed}=\\max(4,2,2,0.5)4 LCUs
+
+The consumption-based portion of the ALB charge is based on four LCUs per hour, in addition to the applicable hourly load-balancer charge and other applicable costs.
+
+### 7.8.2. Network Load Balancer — NLCU
+
+NLB uses three capacity dimensions:
+
+| Dimension          | TCP capacity per NLCU      |
+| ------------------ | -------------------------- |
+| New connections    | 800 connections/second     |
+| Active connections | 100,000 connections/minute |
+| Processed bytes    | 1 GB/hour                  |
+
+UDP and TLS have different connection/flow capacities:
+
+| Protocol | New connections/flows | Active connections/flows |
+| -------- | --------------------- | ------------------------ |
+| TCP      | 800/sec               | 100,000/min              |
+| UDP      | 400/sec               | 50,000/min               |
+| TLS      | 50/sec                | 3,000/min                |
+
+The processed-byte allowance is 1 GB/hour for these target types.
+
+As with ALB, AWS charges based on the highest of the applicable dimensions for the hour. Amazon Web Services, Inc. +1
+
+### 7.8.3. Monitor capacity consumption
+
+For ALB:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApplicationELB \
+  --metric-name ConsumedLCUs \
+  --dimensions \
+    Name=LoadBalancer,Value=app/my-alb/1234567890123456 \
+  --start-time "$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 3600 \
+  --statistics Maximum Average
+```
+
+For NLB, use:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/NetworkELB \
+  --metric-name ConsumedLCUs \
+  --dimensions \
+    Name=LoadBalancer,Value=net/my-nlb/1234567890123456 \
+  --start-time "$(date -u -d '1 day ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 3600 \
+  --statistics Maximum Average
+```
+
+### 7.8.4. Cost optimization strategies
+
+Consider the following optimization techniques:
+
+* Optimize connection reuse: HTTP keep-alive and HTTP/2 can reduce unnecessary new connections.
+
+* Reduce unnecessary data transfer: Compress responses and avoid sending unnecessarily large payloads.
+
+* Optimize listener rules: Avoid unnecessarily complex routing configurations.
+
+* Use appropriate target capacity: Scale backend resources according to actual demand.
+
+* Monitor cross-zone traffic: Understand the associated data-transfer and load-balancing implications.
+
+* Review idle load balancers: Remove unused load balancers and associated resources.
+
+* Review logging costs: Configure retention, lifecycle policies, and appropriate log destinations.
+
+* Use capacity reservations appropriately: Where supported and justified, evaluate ALB LCU reservations against actual demand.
+
+One important point: optimizing ALB LCUs does not automatically optimize your total AWS bill. EC2, ECS, EKS, NAT Gateway, data transfer, CloudWatch, and S3 charges must also be considered.
+
+For accurate cost estimates, always use the pricing page for your deployment Region.
+
+Reference: [AWS Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/?utm_source=chatgpt.com).
+
+### 7.9. Identifying Performance Bottlenecks
+
+A load balancer distributes incoming traffic, but it cannot eliminate bottlenecks in the application infrastructure.
+
+Let's examine the most common bottleneck categories.
+
+### 7.9.1. EC2 instance bottlenecks
+
+Possible problems:
+
+* CPU utilization is consistently high.
+
+* Memory pressure causes swapping or application instability.
+
+* Network bandwidth becomes saturated.
+
+* The application creates too many threads or processes.
+
+* File descriptors or connection pools are exhausted.
+
+Useful metrics:
+
+* `CPUUtilization`
+
+* NetworkIn / NetworkOut
+
+* Memory utilization (through CloudWatch Agent or another monitoring solution)
+
+* Disk utilization and I/O metrics
+
+### 7.9.2. ECS and EKS bottlenecks
+
+For containerized workloads, investigate:
+
+* CPU and memory reservations versus actual usage.
+
+* Container restarts and out-of-memory events.
+
+* ECS task count and service deployment status.
+
+* Kubernetes Pod readiness and resource limits.
+
+* HPA scaling behavior.
+
+* Insufficient cluster capacity.
+
+* Slow container startup and readiness probes.
+
+A common situation is that ALB reports unhealthy targets because containers cannot become ready quickly enough.
+
+This is why application readiness, container health, and load-balancer health checks must be designed together.
+
+### 7.9.3. Database bottlenecks
+
+Your application may be healthy from the load balancer's perspective while its database is overloaded.
+
+Common symptoms:
+
+* Increased query execution time.
+
+* Database connection pool exhaustion.
+
+* High database CPU utilization.
+
+* Lock contention.
+
+* Slow transactions.
+
+* Excessive database connections.
+
+Useful monitoring sources include:
+
+* Amazon RDS CloudWatch metrics.
+
+* RDS Performance Insights or its current successor capabilities.
+
+* Application database query logs.
+
+* Application-level tracing.
+
+### 7.9.4. Networking bottlenecks
+
+Investigate:
+
+* Security group restrictions.
+
+* Network ACL rules.
+
+* Incorrect route tables.
+
+* DNS resolution problems.
+
+* Connection timeouts.
+
+* TLS negotiation failures.
+
+* Network bandwidth limitations.
+
+For ALB, examine `TargetConnectionErrorCount` and `TargetTLSNegotiationErrorCount`.
+
+For NLB, investigate TCP reset metrics, active flows, and target connection behavior.
+
+### 7.9.5. A practical bottleneck diagnosis table
+
+| Observation                  | Possible cause                   | Investigation                              |
+| ---------------------------- | -------------------------------- | ------------------------------------------ |
+| High ALB target latency      | Slow application                 | Application profiling and database metrics |
+| High target 5xx              | Backend errors                   | Application logs                           |
+| High ALB 5xx                 | Load-balancer-side errors        | ALB access logs and target health          |
+| Increasing unhealthy targets | Backend failures                 | Health checks and container logs           |
+| High CPU, normal ALB health  | Insufficient compute capacity    | EC2/ECS/EKS metrics                        |
+| High connection errors       | Network or target connectivity   | Security groups and target logs            |
+| High TLS errors              | Certificate or protocol mismatch | TLS configuration and connection logs      |
+| Increasing database latency  | Database bottleneck              | RDS monitoring and query analysis          |
+
+### 7.10. Troubleshooting HTTP 502, 503, and Other Errors
+
+HTTP error codes are especially important when operating ALB-based applications.
+
+First, understand the difference between errors generated by the load balancer and errors generated by the target.
+
+### 7.10.1. HTTP 502 — Bad Gateway
+
+ALB may generate HTTP 502 when it receives an invalid response from a target or encounters certain backend connection failures.
+
+Possible causes include:
+
+* Target closes the connection unexpectedly.
+
+* Target sends a malformed HTTP response.
+
+* Target resets the connection.
+
+* Invalid or incomplete response headers.
+
+* TLS negotiation failure between ALB and target.
+
+Investigation:
+
+```bash
+aws cloudwatch get-metric-statistics \
+  --namespace AWS/ApplicationELB \
+  --metric-name HTTPCode_ELB_502_Count \
+  --dimensions \
+    Name=LoadBalancer,Value=app/my-alb/1234567890123456 \
+  --start-time "$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)" \
+  --end-time "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --period 60 \
+  --statistics Sum
+```
+
+Then examine:
+
+* Target connection errors.
+
+* Application logs.
+
+* Target response behavior.
+
+* TLS configuration.
+
+* ALB access-log error details.
+
+### 7.10.2. HTTP 503 — Service Unavailable
+
+A common reason for ALB-generated 503 responses is that no registered targets are available to handle requests.
+
+Possible causes:
+
+* No registered targets.
+
+* All targets are unhealthy.
+
+* Incorrect target-group configuration.
+
+* Targets are being deregistered.
+
+* Application deployment problems.
+
+Check target health:
+
+```bash
+aws elbv2 describe-target-health \
+  --target-group-arn "$TARGET_GROUP_ARN"
+```
+
+Inspect the results and investigate the reported target-health reason codes.
+
+### 7.10.3. HTTP 504 — Gateway Timeout
+
+ALB may return 504 when it cannot receive the required response from the target within the applicable timeout.
+
+Possible causes:
+
+* Slow application execution.
+
+* Database queries taking too long.
+
+* External API dependencies.
+
+* Backend connection timeouts.
+
+* Incorrect timeout configuration.
+
+Check:
+
+```bash
+aws elbv2 describe-load-balancer-attributes \
+  --load-balancer-arn "$ALB_ARN"
+```
+
+Also investigate the target response time and application logs.
+
+### 7.10.4. HTTP 4xx errors
+
+Not all 4xx errors originate from the backend.
+
+For example:
+
+* ALB can generate 400 responses for malformed requests.
+
+* ALB can generate 403 responses in certain authentication and security scenarios.
+
+* Targets can generate 400, 401, 403, 404, and other application-specific errors.
+
+Compare:
+
+* `HTTPCode_ELB_4XX_Count`
+
+* `HTTPCode_Target_4XX_Count`
+
+This helps identify where the errors originate.
+
+### 7.11. Hands-on Labs
+
+Practical implementation
+
+We'll use the ALB application deployed in the previous modules as our foundation. You should reuse its VPC, subnets, security groups, target groups, and listeners wherever possible.
+
+The labs are designed to build on one another.
+
+### Lab 1 — Build a CloudWatch Monitoring Dashboard with Pulumi
+
+Objective: Create a complete monitoring dashboard for the existing ALB application.
+
+Tasks:
+
+* Create a Pulumi Python project.
+
+* Retrieve or configure the ALB dimension.
+
+* Create a CloudWatch dashboard.
+
+* Add request-count and latency widgets.
+
+* Add target-health and HTTP-error widgets.
+
+* Add connection and LCU monitoring.
+
+* Create SNS notifications.
+
+* Create alarms for latency, backend errors, and unhealthy targets.
+
+* Deploy the infrastructure using `pulumi up`.
+
+* Verify dashboard metrics and SNS subscription.
+
+Expected result:
+
+ALB monitoring dashboard
+
+Requests
+
+### 12.5K
+
+Illustrative metric
+
+P95 latency
+
+### 180 ms
+
+Illustrative metric
+
+Healthy targets
+
+### 4
+
+Illustrative metric
+
+Consumed LCUs
+
+### 2.4
+
+Illustrative metric
+
+Example layout only; these are not live AWS measurements.
+
+### Lab 2 — Enable and Analyze ALB Access Logs
+
+Objective: Understand actual HTTP requests processed by ALB.
+
+Tasks:
+
+* Create an S3 bucket using Pulumi.
+
+* Configure the appropriate ALB log-delivery permissions.
+
+* Enable access logging.
+
+* Generate HTTP requests with `curl`.
+
+* Generate some unsuccessful requests.
+
+* Retrieve and decompress the log files.
+
+* Identify client IPs, target IPs, HTTP status codes, and request processing times.
+
+* Analyze slow requests.
+
+* Configure an S3 lifecycle policy for log retention.
+
+Expected result: You should be able to trace individual requests and distinguish backend application problems from load-balancer problems.
+
+### Lab 3 — Load Testing and Performance Analysis
+
+Objective: Generate traffic and observe application behavior.
+
+Tasks:
+
+* Install Docker-based k6.
+
+* Create a test script with multiple traffic stages.
+
+* Start with 10 virtual users.
+
+* Increase traffic to 50 virtual users.
+
+* Monitor CloudWatch metrics during the test.
+
+* Compare request counts with target response times.
+
+* Monitor EC2 CPU and memory.
+
+* Identify the first infrastructure component that becomes a bottleneck.
+
+* Repeat the test after increasing backend capacity.
+
+Expected result: Understand how application performance changes as traffic increases.
+
+### Lab 4 — Correlate Load Balancer and Backend Metrics
+
+Objective: Identify the source of performance degradation.
+
+Tasks:
+
+* Monitor ALB `TargetResponseTime`.
+
+* Monitor `HealthyHostCount` and `UnHealthyHostCount`.
+
+* Monitor EC2 CPU utilization.
+
+* Monitor ECS task count or EKS Pod count if using containers.
+
+* Generate traffic using k6.
+
+* Identify whether latency originates from ALB, the application, or a downstream dependency.
+
+* Compare the behavior before and after scaling the backend.
+
+Expected result: Develop a systematic approach to infrastructure-level performance troubleshooting.
+
+### Lab 5 — Simulate and Troubleshoot HTTP 502/503 Errors
+
+Objective: Investigate load-balancer failures using metrics, logs, and AWS CLI.
+
+Tasks:
+
+* Generate traffic against the ALB.
+
+* Introduce a controlled backend failure.
+
+* Observe target health transitions.
+
+* Inspect ALB-generated 5xx metrics.
+
+* Inspect target-generated 5xx metrics.
+
+* Examine access logs and target-health reason codes.
+
+* Restore the backend.
+
+* Verify target recovery.
+
+* Compare metrics before, during, and after the failure.
+
+Expected result: Understand how to diagnose and recover from common production load-balancing problems.
+
+Safety note: Perform failure simulations only in your lab environment. Avoid terminating production targets or changing production listener configurations.
+
+### 7.12. Module Summary
+
+By completing this module, you should understand the operational side of AWS load balancing.
+
+| Area                   | Skills acquired                               |
+| ---------------------- | --------------------------------------------- |
+| CloudWatch             | ALB/NLB metrics, dimensions, statistics       |
+| Logging                | ALB access logs and NLB connection logging    |
+| Alerting               | CloudWatch dashboards, alarms, SNS            |
+| Auditing               | CloudTrail and AWS Config                     |
+| Load testing           | k6, wrk, Bash, performance analysis           |
+| Cost optimization      | LCU, NLCU, traffic and capacity costs         |
+| Troubleshooting        | 4xx, 502, 503, 504, TLS and connection issues |
+| Infrastructure as Code | Pulumi-based monitoring resources             |
+
+### Important AWS documentation
+
+These are useful references while implementing the labs:
+
+* [ALB CloudWatch metrics](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-cloudwatch-metrics.html?utm_source=chatgpt.com).
+
+* [NLB CloudWatch metrics](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/load-balancer-cloudwatch-metrics.html?utm_source=chatgpt.com).
+
+* [ALB access logs](https://docs.aws.amazon.com/elasticloadbalancing/latest/application/load-balancer-access-logs.html?utm_source=chatgpt.com).
+
+* [ELB CloudTrail integration](https://docs.aws.amazon.com/elasticloadbalancing/latest/userguide/cloudtrail-logs.html?utm_source=chatgpt.com).
+
+* [Elastic Load Balancing pricing](https://aws.amazon.com/elasticloadbalancing/pricing/?utm_source=chatgpt.com).
+
+* [k6 documentation](https://grafana.com/docs/k6/latest/?utm_source=chatgpt.com).
+
+Next: Module 8 — Production Architecture, Global Traffic, and Capstone. We'll bring together ALB/NLB, ECS/EKS, Route 53, Global Accelerator, CloudFront, WAF, Pulumi, and multi-region architecture to design a production-ready AWS application.
