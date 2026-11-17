@@ -36,7 +36,7 @@ A VPC is not a virtual machine, a physical router you administer, or a single se
 
 ### Traditional network vs. Amazon VPC
 
-![alt text](img/image.png)
+![alt text](img/1.png)
 
 The key difference is the operational model: AWS manages the underlying physical networking fabric, while you configure the logical network and the access rules for your workloads.
 
@@ -66,7 +66,7 @@ A VPC is a regional resource. A subnet is an Availability Zone-scoped resource.
 
 This distinction determines how you design resilient networks.
 
-![alt text](img/image-1.png)
+![alt text](img/2.png)
 
 ### Resource scope at a glance
 
@@ -181,27 +181,7 @@ For example, consider:
 
 This contains 65,536 IPv4 addresses before AWS subnet reservations and other allocation constraints.
 
-### Example address plan
-
-### 10.42.0.0/16
-
-VPC · 65,536 IPv4 addresses
-
-10.42.1.0/24
-
-AZ A · 256 addresses, 251 normally assignable
-
-10.42.2.0/24
-
-AZ B · 256 addresses, 251 normally assignable
-
-10.42.10.0/24
-
-Future application tier
-
-10.42.20.0/24
-
-Future database tier
+![alt text](img/3.png)
 
 For ordinary AWS IPv4 subnets, AWS reserves five addresses in every subnet: the first four and the last. A `/24` therefore has 251 addresses available for assignment to resources.
 
@@ -281,21 +261,7 @@ A new VPC automatically has a main route table with a local route for its VPC CI
 
 Conceptually, our lab will look like this:
 
-VPC · 10.42.0.0/16
-
-Logically isolated network
-
-### Custom route table
-
-10.42.0.0/16
-
-local
-
-The VPC's local route enables routing within the VPC address space.
-
-Subnet · 10.42.1.0/24
-
-Availability Zone A
+![alt text](img/4.png)
 
 The route table has a local route that allows communication between subnets in the VPC's address space, subject to security controls and other applicable configuration. We won't add a default route to the internet in this lab.
 
@@ -434,27 +400,7 @@ We'll now turn the concepts into actual AWS resources.
 
 We'll use the current Pulumi AWS provider, Python, and AWS CLI v2. The examples follow the Pulumi AWS provider's documented VPC, subnet, and route-table APIs.
 
-### Lab architecture
-
-Custom VPC
-
-### 10.42.0.0/16
-
-DNS support and DNS hostnames enabled
-
-Subnet
-
-10.42.1.0/24
-
-One Availability Zone
-
-Route table
-
-Local route
-
-Explicit subnet association
-
-No internet gateway, NAT gateway, EC2 instance, or public IP address is created by this lab.
+![alt text](img/5.png)
 
 ### 10.1 Prerequisites
 
