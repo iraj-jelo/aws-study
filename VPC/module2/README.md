@@ -38,34 +38,6 @@ A VPC is not a virtual machine, a physical router you administer, or a single se
 
 ![alt text](img/image.png)
 
-### Traditional data-center network
-
-Physical or virtual network
-
-Switches · Routers · Firewalls
-
-Application servers
-
-Database servers
-
-Your team may operate physical equipment, virtual switches, routing appliances, and firewalls, depending on the environment.
-
-### Amazon VPC
-
-### Your VPC
-
-AWS-managed network infrastructure
-
-Subnet A · AZ A
-
-Application ENIs and private IPs
-
-Subnet B · AZ B
-
-Database ENIs and private IPs
-
-You configure CIDRs, subnets, routes, security policies, and connectivity.
-
 The key difference is the operational model: AWS manages the underlying physical networking fabric, while you configure the logical network and the access rules for your workloads.
 
 A VPC does not automatically provide every kind of connectivity. For example, creating a VPC alone does not give your instances direct internet access. That requires appropriate routing and connectivity resources, which we'll build in Module 3.
@@ -95,28 +67,6 @@ A VPC is a regional resource. A subnet is an Availability Zone-scoped resource.
 This distinction determines how you design resilient networks.
 
 ![alt text](img/image-1.png)
-
-AWS Region
-
-One VPC · 10.20.0.0/16
-
-### Availability Zone A
-
-Subnet A
-
-10.20.1.0/24
-
-Resources placed in this subnet use this AZ.
-
-### Availability Zone B
-
-Subnet B
-
-10.20.2.0/24
-
-A separate subnet enables multi-AZ placement.
-
-Both subnets belong to the same regional VPC. Subnets cannot span multiple Availability Zones.
 
 ### Resource scope at a glance
 
