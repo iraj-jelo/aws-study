@@ -37,28 +37,6 @@ AWS IAM Identity Center addresses this problem by providing a centralized way to
 
 ![alt text](img/d05.png)
 
-Workforce identities
-
-Developers · Operators · Security administrators
-
-IAM Identity Center
-
-Sign-in · MFA integration · Permission assignments · Access portal
-
-Development
-
-Developer access
-
-Production
-
-Restricted operations
-
-Security
-
-Audit access
-
-Conceptual architecture: access is assigned centrally, while each account has its own authorization controls.
-
 ### 1.2 How the main components fit together
 
 | Component              | Responsibility                                                         |
@@ -168,22 +146,6 @@ A common but risky CI/CD design stores an AWS access key and secret in repositor
 With OIDC federation, GitHub Actions can request an identity token for a workflow and exchange that identity for temporary AWS ro
 
 ![alt text](img/d05-1.png)
-
-GitHub Actions workflow
-
-Runs a deployment job
-
-GitHub OIDC identity token
-
-Contains issuer, audience, and workflow identity claims
-
-AWS STS — AssumeRoleWithWebIdentity
-
-Validates the configured trust relationship and token claims
-
-Temporary AWS role credentials
-
-Only the permissions granted to the assumed role
 
 For this arrangement, you need:
 
