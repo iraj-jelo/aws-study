@@ -1,0 +1,10 @@
+name: iam-policy-lab
+description: A minimal AWS Python Pulumi program
+runtime:
+  name: python
+  options:
+    toolchain: pip
+config:
+  pulumi:tags:
+    value:
+      pulumi:template: aws-python
