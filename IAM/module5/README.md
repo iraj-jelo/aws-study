@@ -77,18 +77,14 @@ For an organization with an existing corporate identity provider, the typical fl
 4. The employee selects an assigned AWS account and role.
 5. AWS issues temporary credentials for authorized API access.
 
-External identity sources can use SAML 2.0 for authentication and SCIM for user and group provisioning. SCIM is not an authentication protocol; it helps synchronize identity information.&#x20;
-
-
-
-
+External identity sources can use SAML 2.0 for authentication and SCIM for user and group provisioning. SCIM is not an authentication protocol; it helps synchronize identity information.
 
 ### 1.4 Authentication is not authorization
 
 These are separate security decisions.
 
-- Authentication: Is this really the employee who claims to be signing in?
-- Authorization: Is this employee allowed to perform the requested AWS operation?
+- **Authentication:** Is this really the employee who claims to be signing in?
+- **Authorization:** Is this employee allowed to perform the requested AWS operation?
 
 For example, a developer might successfully sign in using corporate credentials and MFA but still be denied permission to delete a production database.
 
@@ -107,10 +103,7 @@ For a real AWS environment, the high-level configuration process is:
 5. Assign the groups to specific AWS accounts and permission sets.
 6. Verify console access and AWS CLI access, including that each identity receives only its intended permissions.
 
-An organization instance is the right choice for centralized account access; account instances are intended for narrower, isolated application use cases.&#x20;
-
-
-
+An organization instance is the right choice for centralized account access; account instances are intended for narrower, isolated application use cases.
 
 ## Lesson 2 — SAML, OIDC, and federation
 
@@ -143,7 +136,7 @@ This is especially important for DevOps.
 
 A common but risky CI/CD design stores an AWS access key and secret in repository secrets. Those credentials can remain valid outside a particular workflow and require careful rotation.
 
-With OIDC federation, GitHub Actions can request an identity token for a workflow and exchange that identity for temporary AWS ro
+With OIDC federation, GitHub Actions can request an identity token for a workflow and exchange that identity for temporary AWS role credentials.
 
 ![alt text](img/d05-1.png)
 
