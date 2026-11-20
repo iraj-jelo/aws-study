@@ -187,9 +187,9 @@ Passwords can be stolen through phishing, reused across services, or exposed in 
 
 Common options include:
 
-- Passkeys and security keys: Phishing-resistant options based on public-key cryptography.
-- Authenticator apps: Generate time-based one-time passwords (TOTP).
-- Other supported MFA devices: Availability depends on the identity system and authentication configuration.
+- **Passkeys and security keys:** Phishing-resistant options based on public-key cryptography.
+- **Authenticator apps:** Generate time-based one-time passwords (TOTP).
+- **Other supported MFA devices:** Availability depends on the identity system and authentication configuration.
 
 For privileged access, prefer phishing-resistant methods where supported. An MFA prompt is not automatically phishing-resistant simply because it involves a second factor.
 
@@ -204,8 +204,7 @@ MFA requirements depend on the type of identity:
 | Direct IAM user                    | IAM user MFA configuration and relevant policy controls |
 | Root user                          | Root-user MFA settings                                  |
 
-An important distinction: if workforce authentication happens through an external IdP, configuring MFA for the built-in IAM Identity Center directory does not automatically configure MFA for that external provider. The external provider's settings govern its authentication process.&#x20;
-
+An important distinction: if workforce authentication happens through an external IdP, configuring MFA for the built-in IAM Identity Center directory does not automatically configure MFA for that external provider. The external provider's settings govern its authentication process.
 
 ### 3.3 Avoid assuming MFA is a universal IAM condition
 
@@ -317,25 +316,25 @@ This command will succeed only if the selected identity has the necessary access
 
 Treat key management as a lifecycle, not a one-time configuration task.
 
-**Create**
+- **Create**
 
-Issue a key only for a justified use case. Give the identity the minimum necessary permissions.
+  Issue a key only for a justified use case. Give the identity the minimum necessary permissions.
 
-**Store**
+- **Store**
 
-Use an appropriate secrets manager or secure credential store. Never commit secret keys to Git, container images, logs, or source code.
+  Use an appropriate secrets manager or secure credential store. Never commit secret keys to Git, container images, logs, or source code.
 
-**Monitor**
+- **Monitor**
 
-Review last-used information, relevant CloudTrail events, and anomalous API activity.
+  Review last-used information, relevant CloudTrail events, and anomalous API activity.
 
-**Rotate or replace**
+- **Rotate or replace**
 
-Where rotation is required, establish a replacement credential, validate the consumer, migrate it, and retire the old credential.
+  Where rotation is required, establish a replacement credential, validate the consumer, migrate it, and retire the old credential.
 
-**Revoke**
+- **Revoke**
 
-Deactivate or delete credentials that are no longer needed, and respond promptly to suspected exposure.
+  Deactivate or delete credentials that are no longer needed, and respond promptly to suspected exposure.
 
 Do not rotate keys blindly on an arbitrary schedule without identifying their consumers. A rotation that breaks a production integration is not a good credential-management process.
 
@@ -698,39 +697,36 @@ Use this checklist when reviewing an AWS environment.
 
 ### Security review
 
-0 of 8 reviewed
+- **Workforce identity**
+  IAM Identity Center or an appropriate federation mechanism is used for human access.
 
-Workforce identity
+- **MFA**
 
-IAM Identity Center or an appropriate federation mechanism is used for human access.
+  Privileged access is protected by appropriate MFA, preferably phishing-resistant methods where supported.
 
-MFA
+- **Root account**
 
-Privileged access is protected by appropriate MFA, preferably phishing-resistant methods where supported.
+  Root credentials are secured, MFA is enabled, and routine operations use dedicated identities.
 
-Root account
+- **Credentials**
 
-Root credentials are secured, MFA is enabled, and routine operations use dedicated identities.
+  Long-term access keys are avoided where possible, and remaining keys have owners and a lifecycle plan.
 
-Credentials
+- **Least privilege**
 
-Long-term access keys are avoided where possible, and remaining keys have owners and a lifecycle plan.
+  Developer, operator, and security permissions are separated and scoped to actual responsibilities.
 
-Least privilege
+- **Privilege escalation**
 
-Developer, operator, and security permissions are separated and scoped to actual responsibilities.
+  IAM policy changes, PassRole, role assumption, and permission-boundary modification are reviewed.
 
-Privilege escalation
+- **Delegated administration**
 
-IAM policy changes, PassRole, role assumption, and permission-boundary modification are reviewed.
+  Administrative responsibilities are delegated narrowly, keeping management-account access limited.
 
-Delegated administration
+- **Auditing**
 
-Administrative responsibilities are delegated narrowly, keeping management-account access limited.
-
-Auditing
-
-Policies are validated and access findings are reviewed, with remediation tracked in source control.
+  Policies are validated and access findings are reviewed, with remediation tracked in source control.
 
 ## Official documentation
 
