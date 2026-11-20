@@ -324,23 +324,23 @@ This command will succeed only if the selected identity has the necessary access
 
 Treat key management as a lifecycle, not a one-time configuration task.
 
-Create
+**Create**
 
 Issue a key only for a justified use case. Give the identity the minimum necessary permissions.
 
-Store
+**Store**
 
 Use an appropriate secrets manager or secure credential store. Never commit secret keys to Git, container images, logs, or source code.
 
-Monitor
+**Monitor**
 
 Review last-used information, relevant CloudTrail events, and anomalous API activity.
 
-Rotate or replace
+**Rotate or replace**
 
 Where rotation is required, establish a replacement credential, validate the consumer, migrate it, and retire the old credential.
 
-Revoke
+**Revoke**
 
 Deactivate or delete credentials that are no longer needed, and respond promptly to suspected exposure.
 
@@ -501,27 +501,6 @@ The organization has three AWS accounts:
 We'll use IAM Identity Center for human access and Pulumi with Python for infrastructure as code.
 
 ![alt text](img/d05-2.png)
-
-
-IAM Identity Center
-
-Workforce sign-in and account assignments
-
-Developers
-
-Development: write access to approved resources
-
-Production: read-only access where required
-
-Operators
-
-Production: approved operational actions
-
-Security: access only if separately assigned
-
-Security administrators
-
-Access reviews, policy validation, and security findings
 
 For this lab, we'll separate two tasks:
 
