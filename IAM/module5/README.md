@@ -245,7 +245,7 @@ An administrator role is not identical to the root user.
 
 An administrator role can have broad permissions, but it is still subject to applicable IAM policies and higher-level organizational restrictions. The root user has special account-level capabilities and should be reserved for tasks that genuinely require it.
 
-Production rule: use a dedicated administrative role for normal operations and keep root access tightly controlled.
+**Production rule:** use a dedicated administrative role for normal operations and keep root access tightly controlled.
 
 ## Lesson 5 — Access-key lifecycle and credential hygiene
 
@@ -253,8 +253,8 @@ An AWS access key consists of an access key ID and a secret access key. Dependin
 
 An important distinction:
 
-- Long-term IAM access keys are credentials associated with an IAM user and remain valid until deactivated or deleted.
-- Temporary credentials are issued through supported AWS security-token workflows and have an expiration time.
+- **Long-term IAM access keys** are credentials associated with an IAM user and remain valid until deactivated or deleted.
+- **Temporary credentials** are issued through supported AWS security-token workflows and have an expiration time.
 
 For human access and AWS workloads, temporary credentials are generally the preferred design.
 
