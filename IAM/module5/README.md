@@ -350,10 +350,10 @@ Consider a developer who needs to deploy a FastAPI application and inspect appli
 
 A useful access model separates:
 
-- Development: Modify development resources and inspect their logs.
-- Operations: Diagnose and manage approved production resources.
-- Security administration: Review identities, policies, and security findings.
-- Organization administration: Manage account structure and organization-wide guardrails.
+- **Development:** Modify development resources and inspect their logs.
+- **Operations:** Diagnose and manage approved production resources.
+- **Security administration:** Review identities, policies, and security findings.
+- **Organization administration:** Manage account structure and organization-wide guardrails.
 
 Separate job functions help reduce the consequences of compromised credentials and accidental changes.
 
@@ -393,12 +393,12 @@ Privilege escalation happens when a principal uses its current permissions to ob
 
 Common patterns include:
 
-- Policy modification: An identity can modify a policy attached to a more privileged role.
-- Role assumption: An identity can assume a powerful role because its trust relationship is too broad or improperly controlled.
-- PassRole abuse: An identity can pass a privileged role to a service and cause that service to perform operations with the role's permissions.
-- Credential creation: An identity can create access keys or users for a more privileged principal.
-- Permission-boundary weaknesses: A boundary is incorrectly configured, or a principal can modify or remove the restrictions intended to constrain it.
-- Indirect privilege escalation: An identity can modify a deployment pipeline, function, or other execution mechanism that operates with more powerful permissions.
+- **Policy modification:** An identity can modify a policy attached to a more privileged role.
+- **Role assumption:** An identity can assume a powerful role because its trust relationship is too broad or improperly controlled.
+- **PassRole abuse:** An identity can pass a privileged role to a service and cause that service to perform operations with the role's permissions.
+- **Credential creation:** An identity can create access keys or users for a more privileged principal.
+- **Permission-boundary weaknesses:** A boundary is incorrectly configured, or a principal can modify or remove the restrictions intended to constrain it.
+- **Indirect privilege escalation:** An identity can modify a deployment pipeline, function, or other execution mechanism that operates with more powerful permissions.
 
 The risk is not limited to `AdministratorAccess`. A collection of individually reasonable permissions can become dangerous when combined.
 
